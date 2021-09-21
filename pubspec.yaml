@@ -27,10 +27,10 @@ dependencies:
 #    git:
 #      url: https://github.com/bauerj/edge_detection
 #      ref: ec8639fffef3d6d0714b260067f77dd1261b39ed
-  cached_network_image: ^3.0.0
+  cached_network_image: ^3.1.0
   dio: ^4.0.0
   flutter_secure_storage: ^4.1.0
-  flutter_svg: ^0.19.3
+  flutter_svg: ^0.22.0
   get_it: ^6.0.0
   http_auth: ^1.0.0
   i18n_extension: ^4.0.0
