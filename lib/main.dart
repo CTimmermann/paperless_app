@@ -1,12 +1,14 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
+import 'dart:io';
 
-import 'package:i18n_extension/i18n_widget.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:get_it/get_it.dart';
-import 'package:paperless_app/routes/home_route.dart';
+import 'package:i18n_extension/i18n_widget.dart';
+import 'package:paperless_app/api.dart';
 import 'package:paperless_app/i18n.dart';
+import 'package:paperless_app/routes/home_route.dart';
 
 void main() {
   runApp(PaperlessApp());
@@ -20,11 +22,18 @@ class PaperlessApp extends StatefulWidget {
 }
 
 class _PaperlessAppState extends State<PaperlessApp> {
-  Future<void> loadAsync;
+  Future<void>? loadAsync;
 
   // This widget is the root of the application.
   @override
   Widget build(BuildContext context) {
+    final ThemeData darkTheme = ThemeData(
+        brightness: Brightness.dark,
+        // ignore: deprecated_member_use
+        accentColor: Colors.lightGreenAccent,
+        primaryColor: Colors.green.shade900,
+        primarySwatch: Colors.lightGreen,
+        fontFamily: 'AlegreyaSans');
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Paperless App',
@@ -32,12 +41,10 @@ class _PaperlessAppState extends State<PaperlessApp> {
         primarySwatch: Colors.green,
         fontFamily: 'AlegreyaSans',
       ),
-      darkTheme: ThemeData(
-          brightness: Brightness.dark,
-          primaryColor: Colors.green.shade900,
-          primarySwatch: Colors.lightGreen,
-          accentColor: Colors.lightGreenAccent,
-          fontFamily: 'AlegreyaSans'),
+      darkTheme: darkTheme.copyWith(
+        colorScheme: darkTheme.colorScheme.copyWith(
+            surface: Colors.green.shade900, secondary: Colors.green.shade500),
+      ),
       home: FutureBuilder(
         future: loadAsync,
         builder: (BuildContext context, AsyncSnapshot<void> snapshot) {
@@ -78,5 +85,6 @@ class _PaperlessAppState extends State<PaperlessApp> {
     super.initState();
     GetIt.I.registerSingleton<FlutterSecureStorage>(new FlutterSecureStorage());
     loadAsync = MyI18n.loadTranslations();
+    HttpOverrides.global = SelfSignedCertHttpOverride();
   }
 }

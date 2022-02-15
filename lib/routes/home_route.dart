@@ -1,4 +1,3 @@
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_svg/svg.dart';
@@ -38,7 +37,7 @@ class _HomeRouteState extends State<HomeRoute> {
     try {
       url = await GetIt.I<FlutterSecureStorage>().read(key: "server_url");
     } catch (e, s) {
-      ScaffoldMessenger.of(_scaffoldKey.currentContext).showSnackBar(SnackBar(
+      ScaffoldMessenger.of(_scaffoldKey.currentContext!).showSnackBar(SnackBar(
         content: Text("Unable to access secure storage: $e ($s))"),
         duration: Duration(seconds: 15),
       ));
@@ -53,6 +52,8 @@ class _HomeRouteState extends State<HomeRoute> {
 
     var username = await GetIt.I<FlutterSecureStorage>().read(key: "username");
     var password = await GetIt.I<FlutterSecureStorage>().read(key: "password");
+    var trustedCertificateSha512 = await GetIt.I<FlutterSecureStorage>()
+        .read(key: "trustedCertificateSha512");
     var apiFlavour =
         await GetIt.I<FlutterSecureStorage>().read(key: "api_flavour");
 
@@ -66,6 +67,8 @@ class _HomeRouteState extends State<HomeRoute> {
     if (apiFlavour == null) {
       apiFlavour = "paperless";
     }
+
+    API.trustedCertificateSha512 = trustedCertificateSha512;
 
     API(url, username: username, password: password, apiFlavour: apiFlavour);
 

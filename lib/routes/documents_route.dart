@@ -1,32 +1,33 @@
+import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/cupertino.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:get_it/get_it.dart';
 import 'package:i18n_extension/i18n_widget.dart';
-import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'package:intl/intl.dart';
+import 'package:paperless_app/delegates/paperless_text_delegate.dart';
+import 'package:paperless_app/i18n.dart';
 import 'package:paperless_app/routes/about_route.dart';
 import 'package:paperless_app/routes/document_detail_route.dart';
-import 'package:paperless_app/scan.dart';
-import 'package:paperless_app/widgets/document_preview.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:get_it/get_it.dart';
-import 'package:receive_sharing_intent/receive_sharing_intent.dart';
-import 'dart:async';
-
+import 'package:paperless_app/routes/select_order_route.dart';
 import 'package:paperless_app/routes/server_details_route.dart';
 import 'package:paperless_app/routes/settings_route.dart';
+import 'package:paperless_app/scan.dart';
 import 'package:paperless_app/widgets/correspondent_widget.dart';
+import 'package:paperless_app/widgets/document_preview.dart';
 import 'package:paperless_app/widgets/search_app_bar.dart';
-import 'package:paperless_app/widgets/select_order_route.dart';
 import 'package:paperless_app/widgets/tag_widget.dart';
-import 'package:paperless_app/i18n.dart';
-import 'package:paperless_app/delegates/paperless_text_delegate.dart';
+import 'package:receive_sharing_intent/receive_sharing_intent.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:wechat_assets_picker/wechat_assets_picker.dart';
 
 import '../api.dart';
+import '../util/handle_dio_error.dart';
 
 class DocumentsRoute extends StatefulWidget {
   static DateFormat dateFormat = DateFormat();
@@ -37,18 +38,23 @@ class DocumentsRoute extends StatefulWidget {
 class _DocumentsRouteState extends State<DocumentsRoute> {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
 
-  ResponseList<Document> documents;
-  ResponseList<Tag> tags;
-  ResponseList<Correspondent> correspondents;
-  ScrollController scrollController;
+  ResponseList<Document>? documents;
+  ResponseList<Tag>? tags;
+  ResponseList<Correspondent>? correspondents;
+  ScrollController? scrollController;
   bool requesting = true;
   String ordering = "-created";
-  String searchString;
+  String? searchString;
+  String? autocompleteString;
+  Tag? tagFilter;
+  Correspondent? correspondentFilter;
   int scanAmount = 0;
   int shareAmount = 0;
   ScanHandler scanHandler = ScanHandler();
-  StreamSubscription intentDataStreamSubscription;
-  List<SharedMediaFile> sharedFiles;
+  late StreamSubscription intentDataStreamSubscription;
+  List<SharedMediaFile>? sharedFiles;
+  List<String> autocompletions = [];
+  bool searchOpen = false;
   bool invertDocumentPreview = true;
 
   Future<void> setOrdering(String ordering) async {
@@ -56,16 +62,23 @@ class _DocumentsRouteState extends State<DocumentsRoute> {
     reloadDocuments();
   }
 
-  void showDocument(Document doc) async {
+  void toggleSearch(bool isOpen) {
+    setState(() {
+      searchOpen = isOpen;
+    });
+  }
+
+  void showDocument(Document? doc) async {
     await Navigator.push(
       context,
       MaterialPageRoute(
-          builder: (context) => DocumentDetailRoute(doc, tags, correspondents)),
+          builder: (context) =>
+              DocumentDetailRoute(doc!, tags, correspondents)),
     );
     reloadDocuments();
   }
 
-  Future<void> searchDocument(String searchString) async {
+  Future<void> searchDocument(String? searchString) async {
     if (searchString == this.searchString) {
       return;
     }
@@ -73,46 +86,53 @@ class _DocumentsRouteState extends State<DocumentsRoute> {
     await reloadDocuments();
   }
 
+  Future<void> getAutocompletions(String? autocompleteString) async {
+    setState(() {
+      this.autocompleteString = autocompleteString;
+    });
+    List<String> a = [];
+    if (autocompleteString!.isNotEmpty)
+      a = await API.instance!.getAutocompletions(autocompleteString);
+    setState(() {
+      autocompletions = a;
+    });
+  }
+
   Future<void> reloadDocuments() async {
+    var oldTagFilter = tagFilter;
+    var oldCorrespondentFilter = correspondentFilter;
+    var oldSearchString = searchString;
     scanHandler.handleScans();
     setState(() {
       requesting = true;
       documents = null;
     });
     try {
-      var _documents = await API.instance
-          .getDocuments(ordering: ordering, search: searchString);
+      var _documents = await API.instance!.getDocuments(
+          ordering: ordering,
+          search: searchString,
+          tag: tagFilter,
+          correspondent: correspondentFilter);
 
       setState(() {
-        documents = _documents;
+        if (oldTagFilter != tagFilter ||
+            oldCorrespondentFilter != correspondentFilter ||
+            searchString != oldSearchString) {
+          print(
+              "Discarding documents as filters have changed ($oldTagFilter != $tagFilter || $oldCorrespondentFilter != $correspondentFilter || $searchString != $oldSearchString)");
+        } else
+          documents = _documents;
         requesting = false;
       });
-    } catch (e) {
-      showDialog(
-          context: _scaffoldKey.currentContext,
-          builder: (BuildContext context) {
-            return AlertDialog(
-                title: Text("Error while connecting to server".i18n),
-                content: Text(e.toString()),
-                actions: <Widget>[
-                  new TextButton(
-                      onPressed: () {
-                        Navigator.pop(context);
-                        reloadDocuments();
-                      },
-                      child: Text("Retry".i18n)),
-                  new TextButton(
-                      onPressed: () {
-                        Navigator.pushReplacement(
-                          context,
-                          MaterialPageRoute(
-                              builder: (context) => ServerDetailsRoute()),
-                        );
-                      },
-                      child: Text("Edit Server Details".i18n))
-                ]);
-          });
+    } on DioError catch (e) {
+      handleDioError(e, context);
     }
+  }
+
+  bool isFiltered() {
+    return tagFilter != null ||
+        searchString != null ||
+        correspondentFilter != null;
   }
 
   Future<void> scanDocument() async {
@@ -120,7 +140,7 @@ class _DocumentsRouteState extends State<DocumentsRoute> {
       scanHandler.scanDocument();
     } catch (e) {
       showDialog(
-          context: _scaffoldKey.currentContext,
+          context: _scaffoldKey.currentContext!,
           builder: (BuildContext context) {
             return AlertDialog(
                 title: Text("Error while uploading document".i18n),
@@ -129,156 +149,331 @@ class _DocumentsRouteState extends State<DocumentsRoute> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      key: _scaffoldKey,
-      floatingActionButton: FloatingActionButton(
-          onPressed: () {
-            _showPicker(context);
-          },
-          child: Icon(Icons.add)),
-      appBar: SearchAppBar(
-          leading: Padding(
-              child: SvgPicture.asset("assets/logo.svg", color: Colors.white),
-              padding: EdgeInsets.all(13)),
-          title: Text(
-            "My Documents".i18n,
-          ),
-          searchListener: searchDocument,
-          actions: <Widget>[
-            IconButton(
-              icon: Icon(Icons.sort_by_alpha),
-              onPressed: () {
-                showDialog(
-                  context: context,
-                  builder: (BuildContext context) => SelectOrderRoute(
-                    setOrdering: setOrdering,
-                    ordering: ordering,
-                  ),
-                );
+  List<Widget> getFilterResults(ResponseList<Named>? items,
+      String? searchString, Widget Function(Object) getWrapper) {
+    List<Widget>? matches;
+    if (items != null)
+      matches = items.results
+          .where(
+            (element) =>
+                searchString == null ||
+                element != null &&
+                    element.name != null &&
+                    element.name!.toLowerCase().contains(
+                          searchString.toLowerCase(),
+                        ),
+          )
+          .map(
+            (i) => InkWell(
+              onTap: () {
+                removeCurrentFilter();
+                setState(() {
+                  if (i.runtimeType == OgTag) this.tagFilter = i as Tag?;
+                  if (i.runtimeType == Correspondent)
+                    this.correspondentFilter = i as Correspondent?;
+                  this.searchOpen = false;
+                });
+
+                this.reloadDocuments();
               },
+              child: Padding(
+                child: getWrapper(i!),
+                padding: EdgeInsets.all(5),
+              ),
             ),
-            PopupMenuButton<String>(
-              onSelected: (String selected) async {
-                if (selected == "settings") {
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => SettingsRoute()),
-                  );
-                  loadSettings();
-                } else if (selected == "logout") {
-                  await GetIt.I<FlutterSecureStorage>().deleteAll();
-                  API.instance = null;
-                  await Navigator.pushReplacement(
-                    context,
-                    MaterialPageRoute(
-                        builder: (context) => ServerDetailsRoute()),
-                  );
-                } else if (selected == "about") {
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => AboutRoute()),
-                  );
-                }
-              },
-              itemBuilder: (BuildContext context) {
-                return <PopupMenuItem<String>>[
-                  PopupMenuItem<String>(
-                      value: "settings", child: Text("Settings".i18n)),
-                  PopupMenuItem<String>(
-                      value: "about", child: Text("About".i18n)),
-                  PopupMenuItem<String>(
-                      value: "logout", child: Text("Logout".i18n)),
-                ];
-              },
-            )
-          ]),
-      body: Stack(
-        children: <Widget>[
-          Center(
-            child: documents != null
-                ? RefreshIndicator(
-                    onRefresh: reloadDocuments,
-                    child: ListView.builder(
-                      controller: scrollController,
-                      itemCount: documents.results.length,
-                      itemBuilder: (context, index) {
-                        List<TagWidget> tagWidgets = documents
-                            .results[index].tags
-                            .map((t) => TagWidget.fromTagId(t, tags))
-                            .toList();
-                        return Card(
-                          margin: EdgeInsets.all(10),
-                          child: Column(
-                            children: <Widget>[
-                              DocumentPreview(
-                                invertDocumentPreview,
-                                documents.results[index],
-                                onTap: () =>
-                                    showDocument(documents.results[index]),
-                              ),
-                              Padding(
-                                padding: EdgeInsets.all(7),
-                                child: Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceBetween,
-                                  children: <Widget>[
-                                    Text(
-                                        '${DocumentsRoute.dateFormat.format(documents.results[index].created..toLocal())}',
-                                        textAlign: TextAlign.left),
-                                    CorrespondentWidget.fromCorrespondentId(
-                                        documents.results[index].correspondent,
-                                        correspondents),
-                                    Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.end,
-                                      children: tagWidgets,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    ))
-                : Container(),
+          )
+          .toList();
+    if (matches == null || matches.isEmpty) {
+      matches = [Text("No matches".i18n)];
+    }
+    return matches;
+  }
+
+  Widget getCurrentMainWidget() {
+    if (documents == null) {
+      return Container();
+    }
+    if (searchOpen) {
+      List<Widget>? matchingTags = getFilterResults(
+          tags, autocompleteString, (t) => TagWidget(t as Tag));
+      List<Widget>? matchingCorrespondents = getFilterResults(correspondents,
+          autocompleteString, (c) => CorrespondentWidget(c as Correspondent));
+      List<Widget> suggestions = [
+        Column(children: [
+          SizedBox(height: 5),
+          Text(
+            "Filter By Tag".i18n,
+            textScaleFactor: 1.5,
           ),
-          PreferredSize(
-            child: requesting ? LinearProgressIndicator() : Container(),
-            preferredSize: Size.fromHeight(5),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: matchingTags,
+            ),
           ),
-          Padding(
-            child: scanAmount > 0 || shareAmount > 0
-                ? Card(
+          SizedBox(height: 15),
+          Text(
+            "Filter By Correspondent".i18n,
+            textScaleFactor: 1.5,
+          ),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(children: matchingCorrespondents),
+          ),
+        ]),
+        SizedBox(height: 5),
+        Text(
+          "Suggestions".i18n,
+          textScaleFactor: 1.5,
+        )
+      ];
+
+      if (autocompleteString == null || autocompleteString == "") {
+        suggestions.add(Text("Start typing to see suggestions".i18n));
+      }
+
+      for (var a in autocompletions) {
+        suggestions.add(
+          InkWell(
+            child: Text(a),
+            onTap: () {
+              this.searchOpen = false;
+              searchDocument(a);
+            },
+          ),
+        );
+      }
+
+      return Column(children: suggestions);
+    }
+    return RefreshIndicator(
+        onRefresh: reloadDocuments,
+        child: ListView.builder(
+          controller: scrollController,
+          itemCount: documents!.results.length,
+          itemBuilder: (context, index) {
+            List<Widget?> tagWidgets = documents!.results[index]!.tags!
+                .map(
+                  (t) => InkWell(
+                    onTap: () {
+                      removeCurrentFilter();
+                      setState(() {
+                        this.tagFilter = TagWidget.fromTagId(t, tags)!.tag;
+                      });
+                      reloadDocuments();
+                    },
+                    child: Padding(
+                      padding: EdgeInsets.all(2),
+                      child: TagWidget.fromTagId(t, tags),
+                    ),
+                  ),
+                )
+                .toList();
+            return Card(
+              margin: EdgeInsets.all(10),
+              child: Column(
+                children: <Widget>[
+                  DocumentPreview(
+                    invertDocumentPreview,
+                    documents!.results[index],
+                    onTap: () => showDocument(documents!.results[index]),
+                  ),
+                  Padding(
+                    padding: EdgeInsets.all(7),
                     child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        SizedBox(height: 50),
-                        CircularProgressIndicator(),
-                        SizedBox(width: 10),
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: <Widget>[
+                        Text(
+                            '${DocumentsRoute.dateFormat.format(documents!.results[index]!.created..toLocal())}',
+                            textAlign: TextAlign.left),
+                        SizedBox(width: 7),
                         Flexible(
-                            child: Text(
-                          "Uploading 1 scanned document"
-                              .plural(scanAmount + shareAmount),
-                          textAlign: TextAlign.center,
-                        )),
-                        SizedBox(width: 10),
-                        Icon(Icons.upload_file)
+                            child: CorrespondentWidget.fromCorrespondentId(
+                                documents!.results[index]!.correspondent,
+                                correspondents)!),
+                        SizedBox(width: 7),
+                        Flexible(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: tagWidgets.whereType<Widget>().toList(),
+                          ),
+                        ),
                       ],
                     ),
-                  )
-                : Container(),
-            padding: EdgeInsets.all(20),
-          ),
-        ],
+                  ),
+                ],
+              ),
+            );
+          },
+        ));
+  }
+
+  void removeCurrentFilter() {
+    setState(() {
+      this.searchString = null;
+      this.tagFilter = null;
+      this.correspondentFilter = null;
+      this.autocompleteString = "";
+      this.autocompletions = [];
+    });
+    reloadDocuments();
+  }
+
+  Widget getLeadingAppbarWidget() {
+    var leading = isFiltered()
+        ? IconButton(
+            icon: const BackButtonIcon(),
+            onPressed: () {
+              removeCurrentFilter();
+            })
+        : Padding(
+            child: SvgPicture.asset("assets/logo.svg", color: Colors.white),
+            padding: EdgeInsets.all(13));
+    return leading;
+  }
+
+  Widget describeCurrentFilter() {
+    if (tagFilter != null) {
+      return Row(children: [
+        Text("Tagged".i18n),
+        SizedBox(
+          width: 7,
+        ),
+        Flexible(child: TagWidget(tagFilter!))
+      ]);
+    }
+    if (correspondentFilter != null) {
+      return Text(
+        "From %s".fill([correspondentFilter!.name!]),
+        overflow: TextOverflow.fade,
+      );
+    }
+    if (searchString != null) {
+      return Text(
+        "Containing '%s'".fill([searchString!]),
+        overflow: TextOverflow.fade,
+      );
+    }
+    return Text("Documents".i18n);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final k = "f" + isFiltered().toString() + ",s" + searchOpen.toString();
+    return WillPopScope(
+      onWillPop: () async {
+        if (isFiltered()) {
+          removeCurrentFilter();
+          return false;
+        }
+        return true;
+      },
+      child: Scaffold(
+        key: _scaffoldKey,
+        floatingActionButton: FloatingActionButton(
+            onPressed: () {
+              _showPicker(context);
+            },
+            child: Icon(Icons.add)),
+        appBar: SearchAppBar(
+            leading: getLeadingAppbarWidget(),
+            isSearchOpen: searchOpen,
+            key: Key(k), // Why is this needed? 😓
+            title: describeCurrentFilter(),
+            searchListener: searchDocument,
+            toggleSearch: toggleSearch,
+            autoCompleteListener: getAutocompletions,
+            actions: <Widget>[
+              PopupMenuButton<String>(
+                onSelected: (String selected) async {
+                  if (selected == "settings") {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => SettingsRoute()),
+                    );
+                    loadSettings();
+                  } else if (selected == "logout") {
+                    await GetIt.I<FlutterSecureStorage>().deleteAll();
+                    API.instance = null;
+                    await Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(
+                          builder: (context) => ServerDetailsRoute()),
+                    );
+                  } else if (selected == "about") {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => AboutRoute()),
+                    );
+                  } else if (selected == "sort") {
+                    showDialog(
+                      context: context,
+                      builder: (BuildContext context) => SelectOrderRoute(
+                        setOrdering: setOrdering,
+                        ordering: ordering,
+                      ),
+                    );
+                  } else if (selected == "help") {
+                    await launch(
+                        "https://github.com/bauerj/paperless_app/wiki/Help");
+                  }
+                },
+                itemBuilder: (BuildContext context) {
+                  return <PopupMenuItem<String>>[
+                    PopupMenuItem<String>(
+                        value: "sort", child: Text("Sort".i18n)),
+                    PopupMenuItem<String>(
+                        value: "settings", child: Text("Settings".i18n)),
+                    PopupMenuItem<String>(
+                        value: "about", child: Text("About".i18n)),
+                    PopupMenuItem<String>(
+                        value: "help", child: Text("Help".i18n)),
+                    PopupMenuItem<String>(
+                        value: "logout", child: Text("Logout".i18n)),
+                  ];
+                },
+              )
+            ]),
+        body: Stack(
+          children: <Widget>[
+            Center(
+              child: getCurrentMainWidget(),
+            ),
+            PreferredSize(
+              child: requesting ? LinearProgressIndicator() : Container(),
+              preferredSize: Size.fromHeight(5),
+            ),
+            Padding(
+              child: scanAmount > 0 || shareAmount > 0
+                  ? Card(
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          SizedBox(height: 50),
+                          CircularProgressIndicator(),
+                          SizedBox(width: 10),
+                          Flexible(
+                              child: Text(
+                            "Uploading 1 scanned document"
+                                .plural(scanAmount + shareAmount),
+                            textAlign: TextAlign.center,
+                          )),
+                          SizedBox(width: 10),
+                          Icon(Icons.upload_file)
+                        ],
+                      ),
+                    )
+                  : Container(),
+              padding: EdgeInsets.all(20),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   void loadTags() async {
-    var _tags = await API.instance.getTags();
+    var _tags = await API.instance!.getTags();
     while (_tags.hasMoreData()) {
       var moreTags = await _tags.getNext();
       _tags.next = moreTags.next;
@@ -290,7 +485,7 @@ class _DocumentsRouteState extends State<DocumentsRoute> {
   }
 
   void loadCorrespondents() async {
-    var _correspondents = await API.instance.getCorrespondents();
+    var _correspondents = await API.instance!.getCorrespondents();
     while (_correspondents.hasMoreData()) {
       var moreCorrespondents = await _correspondents.getNext();
       _correspondents.next = moreCorrespondents.next;
@@ -315,9 +510,9 @@ class _DocumentsRouteState extends State<DocumentsRoute> {
   }
 
   void uploadSharedDocuments() async {
-    if (sharedFiles != null && sharedFiles.isNotEmpty) {
-      for (var f in sharedFiles) {
-        await API.instance.uploadFile(f.path);
+    if (sharedFiles != null && sharedFiles!.isNotEmpty) {
+      for (var f in sharedFiles!) {
+        await API.instance!.uploadFile(f.path);
         setState(() {
           shareAmount--;
         });
@@ -332,7 +527,7 @@ class _DocumentsRouteState extends State<DocumentsRoute> {
       setState(() {
         sharedFiles = value;
         if (sharedFiles != null) {
-          shareAmount += sharedFiles.length;
+          shareAmount += sharedFiles!.length;
         }
       });
       uploadSharedDocuments();
@@ -345,7 +540,7 @@ class _DocumentsRouteState extends State<DocumentsRoute> {
       setState(() {
         sharedFiles = value;
         if (sharedFiles != null) {
-          shareAmount += sharedFiles.length;
+          shareAmount += sharedFiles!.length;
         }
       });
       uploadSharedDocuments();
@@ -368,24 +563,35 @@ class _DocumentsRouteState extends State<DocumentsRoute> {
 
   @override
   void dispose() {
-    scrollController.removeListener(_scrollListener);
+    scrollController!.removeListener(_scrollListener);
     intentDataStreamSubscription.cancel();
     super.dispose();
   }
 
   void _scrollListener() async {
-    if (scrollController.position.extentAfter < 900 &&
+    if (scrollController!.position.extentAfter < 900 &&
         !requesting &&
-        documents.hasMoreData()) {
+        documents!.hasMoreData()) {
       setState(() {
         requesting = true;
       });
-      var _documents = await documents.getNext();
-      setState(() {
-        documents.next = _documents.next;
-        documents.results.addAll(_documents.results);
-        requesting = false;
-      });
+      var oldTagFilter = tagFilter;
+      var oldCorrespondentFilter = correspondentFilter;
+      var oldSearchString = searchString;
+
+      var _documents = await documents!.getNext();
+
+      if (oldTagFilter != tagFilter ||
+          oldCorrespondentFilter != correspondentFilter ||
+          searchString != oldSearchString) {
+        print(
+            "Discarding documents as filters have changed ($oldTagFilter != $tagFilter || $oldCorrespondentFilter != $correspondentFilter || $searchString != $oldSearchString)");
+      } else
+        setState(() {
+          documents!.next = _documents.next;
+          documents!.results.addAll(_documents.results);
+          requesting = false;
+        });
     }
   }
 
@@ -422,7 +628,7 @@ class _DocumentsRouteState extends State<DocumentsRoute> {
   }
 
   Future _getImage(context) async {
-    List<AssetEntity> assets = await AssetPicker.pickAssets(context,
+    List<AssetEntity>? assets = await AssetPicker.pickAssets(context,
         requestType: RequestType.image,
         sortPathDelegate: PaperlessSortPathDelegate(),
         maxAssets: 100,
@@ -435,8 +641,8 @@ class _DocumentsRouteState extends State<DocumentsRoute> {
       });
 
       for (var image in assets) {
-        File img = await image.file;
-        await API.instance.uploadFile(img.path);
+        File? img = await (image.file);
+        await API.instance!.uploadFile(img!.path);
         setState(() {
           shareAmount--;
         });

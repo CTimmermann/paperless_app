@@ -12,11 +12,11 @@ import 'documents_route.dart';
 
 class DocumentDetailRoute extends StatefulWidget {
   final Document document;
-  final ResponseList<Tag> tags;
-  final ResponseList<Correspondent> correspondents;
+  final ResponseList<Tag>? tags;
+  final ResponseList<Correspondent>? correspondents;
 
   const DocumentDetailRoute(this.document, this.tags, this.correspondents,
-      {Key key})
+      {Key? key})
       : super(key: key);
 
   @override
@@ -27,8 +27,8 @@ class DocumentDetailRoute extends StatefulWidget {
 
 class _DocumentDetailRouteState extends State<DocumentDetailRoute> {
   final Document _document;
-  final ResponseList<Tag> _tags;
-  final ResponseList<Correspondent> _correspondents;
+  final ResponseList<Tag>? _tags;
+  final ResponseList<Correspondent>? _correspondents;
 
   _DocumentDetailRouteState(this._document, this._tags, this._correspondents);
 
@@ -39,8 +39,9 @@ class _DocumentDetailRouteState extends State<DocumentDetailRoute> {
 
   @override
   Widget build(BuildContext context) {
-    bool editable =
-        API.instance.getCapabilities().contains(APICapability.UPDATE_DOCUMENTS);
+    bool editable = API.instance!
+        .getCapabilities()
+        .contains(APICapability.UPDATE_DOCUMENTS);
     return Scaffold(
       appBar: AppBar(
         actions: [
@@ -58,12 +59,12 @@ class _DocumentDetailRouteState extends State<DocumentDetailRoute> {
                       return AlertDialog(
                           title: Text("Confirm removal".i18n),
                           content: Text(
-                              "Are you sure you want to remove this document?"
+                              "Are you sure you want to remove this document? This can not be undone."
                                   .i18n),
                           actions: <Widget>[
                             new TextButton(
                                 onPressed: () {
-                                  API.instance.deleteDocument(_document);
+                                  API.instance!.deleteDocument(_document);
                                   Navigator.pop(context);
                                   Navigator.pop(context);
                                 },
@@ -80,7 +81,7 @@ class _DocumentDetailRouteState extends State<DocumentDetailRoute> {
                 TextEditingController _textFieldController =
                     TextEditingController();
                 _textFieldController.value =
-                    TextEditingValue(text: _document.title);
+                    TextEditingValue(text: _document.title!);
                 showDialog(
                     context: context,
                     builder: (context) {
@@ -124,7 +125,7 @@ class _DocumentDetailRouteState extends State<DocumentDetailRoute> {
           )
         ],
         title: Text(
-          _document.title,
+          _document.title!,
           overflow: TextOverflow.fade,
           softWrap: false,
         ),
@@ -148,7 +149,7 @@ class _DocumentDetailRouteState extends State<DocumentDetailRoute> {
                   "Created".i18n,
                   editable: editable,
                   onEdit: () async {
-                    DateTime newDate = await showDatePicker(
+                    DateTime? newDate = await showDatePicker(
                         initialDate: _document.created.toLocal(),
                         firstDate: DateTime(1900),
                         lastDate: DateTime.now().add(Duration(days: 100)),
@@ -185,18 +186,19 @@ class _DocumentDetailRouteState extends State<DocumentDetailRoute> {
                         },
                       ),
                     );
-                    for (var c in _correspondents.results) {
-                      options.add(SimpleDialogOption(
-                        child: Text(c.name),
-                        onPressed: () {
-                          setState(() {
-                            _document.correspondent = c.id;
-                            saveCorrespondent();
-                          });
-                          Navigator.of(context).pop();
-                        },
-                      ));
-                    }
+                    if (_correspondents != null)
+                      for (var c in _correspondents!.results) {
+                        options.add(SimpleDialogOption(
+                          child: Text(c!.name!),
+                          onPressed: () {
+                            setState(() {
+                              _document.correspondent = c.id;
+                              saveCorrespondent();
+                            });
+                            Navigator.of(context).pop();
+                          },
+                        ));
+                      }
                     showDialog(
                         context: context,
                         builder: (BuildContext context) {
@@ -209,65 +211,47 @@ class _DocumentDetailRouteState extends State<DocumentDetailRoute> {
                 ),
                 CorrespondentWidget.fromCorrespondentId(
                     _document.correspondent, _correspondents,
-                    showIfNone: true),
+                    showIfNone: true)!,
                 _EditableHeading(
                   "Tags".i18n,
                   editable: editable,
                   onEdit: () {
                     List<Widget> items = [];
-                    for (var t in _tags.results) {
-                      items.add(
-                        SelectableTagWidget(
-                          TagWidget.fromTagId(t.id, _tags),
-                          _document.tags.contains(t.id),
-                          onEdit: (v) {
-                            setState(() {
-                              if (v)
-                                _document.tags.add(t.id);
-                              else
-                                _document.tags
-                                    .removeWhere((tag) => t.id == tag);
-                              saveTags();
-                            });
-                          },
-                        ),
-                      );
-                    }
+                    if (_tags != null)
+                      for (var t in _tags!.results) {
+                        items.add(
+                          SimpleDialogOption(
+                            child: SelectableTagWidget(
+                              TagWidget.fromTagId(t!.id, _tags),
+                              _document.tags!.contains(t.id),
+                              onEdit: (v) {
+                                setState(() {
+                                  if (v!)
+                                    _document.tags!.add(t.id);
+                                  else
+                                    _document.tags!
+                                        .removeWhere((tag) => t.id == tag);
+                                  saveTags();
+                                });
+                              },
+                            ),
+                          ),
+                        );
+                      }
                     showDialog(
                         context: context,
                         builder: (context) {
-                          return AlertDialog(
+                          return SimpleDialog(
                             title: Text("Select Tags".i18n),
-                            actions: <Widget>[
-                              TextButton(
-                                child: Text("OK".i18n),
-                                onPressed: () {
-                                  Navigator.of(context).pop();
-                                },
-                              )
-                            ],
-                            content: SingleChildScrollView(
-                              child: Container(
-                                width: double.maxFinite,
-                                child: ConstrainedBox(
-                                  constraints: BoxConstraints(
-                                    maxHeight:
-                                        MediaQuery.of(context).size.height *
-                                            0.7,
-                                  ),
-                                  child: ListView(
-                                    children: items,
-                                  ),
-                                ),
-                              ),
-                            ),
+                            children: items,
                           );
                         });
                   },
                 ),
                 Row(
-                    children: _document.tags
+                    children: _document.tags!
                         .map((e) => TagWidget.fromTagId(e, _tags))
+                        .whereType<Widget>()
                         .toList())
               ],
             ),
@@ -292,30 +276,31 @@ class _DocumentDetailRouteState extends State<DocumentDetailRoute> {
   }
 
   Future<void> saveTags() async {
-    await API.instance.updateDocument(_document.id, {"tags": _document.tags});
+    await API.instance!.updateDocument(_document.id, {"tags": _document.tags});
   }
 
   Future<void> saveCreatedDate() async {
-    await API.instance.updateDocument(
+    await API.instance!.updateDocument(
         _document.id, {"created": _document.created.toIso8601String()});
   }
 
   Future<void> saveCorrespondent() async {
-    await API.instance.updateDocument(
+    await API.instance!.updateDocument(
         _document.id, {"correspondent": _document.correspondent});
   }
 
   Future<void> saveTitle() async {
-    await API.instance.updateDocument(_document.id, {"title": _document.title});
+    await API.instance!
+        .updateDocument(_document.id, {"title": _document.title});
   }
 }
 
 class _EditableHeading extends StatefulWidget {
-  final VoidCallback onEdit;
+  final VoidCallback? onEdit;
   final String text;
-  final bool editable;
+  final bool? editable;
 
-  const _EditableHeading(this.text, {Key key, this.onEdit, this.editable})
+  const _EditableHeading(this.text, {Key? key, this.onEdit, this.editable})
       : super(key: key);
 
   @override
@@ -326,8 +311,8 @@ class _EditableHeading extends StatefulWidget {
 
 class _EditableHeadingState extends State<_EditableHeading> {
   final String text;
-  final VoidCallback onEdit;
-  final bool editable;
+  final VoidCallback? onEdit;
+  final bool? editable;
 
   _EditableHeadingState(this.text, this.onEdit, this.editable);
 
@@ -343,7 +328,7 @@ class _EditableHeadingState extends State<_EditableHeading> {
                   text,
                   factor: 0.5,
                 )),
-            editable
+            editable!
                 ? IconButton(
                     icon: Icon(Icons.edit),
                     onPressed: onEdit,
